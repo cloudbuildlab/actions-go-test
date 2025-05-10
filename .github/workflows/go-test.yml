@@ -1,0 +1,128 @@
+name: Go Test
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: 'stable'
+      working-directory:
+        description: 'Working directory to run tests in'
+        required: false
+        type: string
+        default: '.'
+      build-tags:
+        description: 'Build tags to use when running tests'
+        required: false
+        type: string
+        default: ''
+      coverage:
+        description: 'Enable test coverage'
+        required: false
+        type: boolean
+        default: false
+      coverage-mode:
+        description: 'Coverage mode (atomic, count, set)'
+        required: false
+        type: string
+        default: 'atomic'
+      coverage-output:
+        description: 'Output file for coverage data'
+        required: false
+        type: string
+        default: 'coverage.out'
+      timeout:
+        description: 'Test timeout'
+        required: false
+        type: string
+        default: '10m'
+      race:
+        description: 'Enable race detection'
+        required: false
+        type: boolean
+        default: false
+      verbose:
+        description: 'Enable verbose test output'
+        required: false
+        type: boolean
+        default: true
+      test-pattern:
+        description: 'Pattern to match test files'
+        required: false
+        type: string
+        default: './...'
+      fail-fast:
+        description: 'Fail fast on first test failure'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+      statuses: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Download Go modules
+        run: |
+          cd "${{ inputs.working-directory }}"
+          go mod download
+
+      - name: Run Go tests
+        id: test
+        run: |
+          cd "${{ inputs.working-directory }}"
+
+          ARGS=""
+          [ "${{ inputs.verbose }}" = "true" ] && ARGS="$ARGS -v"
+          [ -n "${{ inputs.build-tags }}" ] && ARGS="$ARGS -tags='${{ inputs.build-tags }}'"
+          [ "${{ inputs.race }}" = "true" ] && ARGS="$ARGS -race"
+          [ "${{ inputs.fail-fast }}" = "true" ] && ARGS="$ARGS -failfast"
+
+          if [ "${{ inputs.coverage }}" = "true" ]; then
+            go test $ARGS \
+              -covermode=${{ inputs.coverage-mode }} \
+              -coverprofile=${{ inputs.coverage-output }} \
+              -timeout=${{ inputs.timeout }} \
+              ${{ inputs.test-pattern }}
+          else
+            go test $ARGS \
+              -timeout=${{ inputs.timeout }} \
+              ${{ inputs.test-pattern }}
+          fi
+        continue-on-error: true
+
+      - name: Check test status
+        if: steps.test.outcome == 'failure'
+        run: |
+          echo "::error::Tests failed. Please review the test results above."
+          exit 1
+
+      - name: Upload coverage
+        if: inputs.coverage == true && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: ${{ inputs.working-directory }}/${{ inputs.coverage-output }}
+          if-no-files-found: ignore
+
+      - name: Print coverage summary
+        if: inputs.coverage == true && always()
+        run: |
+          echo "### Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=${{ inputs.working-directory }}/${{ inputs.coverage-output }} >> $GITHUB_STEP_SUMMARY
